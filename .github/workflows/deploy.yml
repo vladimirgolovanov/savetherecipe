@@ -22,6 +22,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Create stub .env for build
+        run: touch .env
+
       - name: Build and push
         run: |
           docker compose --project-name savetherecipe --file=docker-compose-savetherecipe-prod.yml build
