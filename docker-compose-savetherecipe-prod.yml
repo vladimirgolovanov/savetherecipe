@@ -6,7 +6,9 @@ services:
       dockerfile: docker/Dockerfile
     container_name: savetherecipe
     working_dir: /app
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     ports:
       - '44045:8080'
     networks:
