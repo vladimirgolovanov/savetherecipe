@@ -1,0 +1,18 @@
+version: '3.1'
+services:
+  savetherecipe:
+    image: ghcr.io/vladimirgolovanov/savetherecipe/savetherecipe:latest
+    build:
+      dockerfile: docker/Dockerfile
+    container_name: savetherecipe
+    working_dir: /app
+    env_file: .env
+    ports:
+      - '44045:8080'
+    networks:
+      - shared-net
+    restart: unless-stopped
+
+networks:
+  grpc-net:
+    external: true
