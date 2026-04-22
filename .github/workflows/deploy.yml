@@ -53,6 +53,7 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_rsa ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker network create grpc-net || true
             cd /projects/savetherecipe
             docker compose --project-name savetherecipe --file=docker-compose-savetherecipe-prod.yml pull
             docker compose --project-name savetherecipe --file=docker-compose-savetherecipe-prod.yml down
