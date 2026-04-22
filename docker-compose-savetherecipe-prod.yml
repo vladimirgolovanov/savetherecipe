@@ -8,7 +8,7 @@ services:
     working_dir: /app
     env_file: .env
     ports:
-      - '44045:8080'
+      - '44045:8088'
     networks:
       - grpc-net
     restart: unless-stopped
