@@ -1,0 +1,57 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        run: |
+          docker compose --project-name savetherecipe --file=docker-compose-savetherecipe-prod.yml build
+          docker compose --project-name savetherecipe --file=docker-compose-savetherecipe-prod.yml push
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+
+      - name: Copy files to server
+        run: |
+          scp -i ~/.ssh/id_rsa docker-compose-savetherecipe-prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/projects/savetherecipe/docker-compose-savetherecipe-prod.yml
+          scp -r -i ~/.ssh/id_rsa docker ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/projects/savetherecipe
+
+      - name: Deploy on server
+        run: |
+          ssh -i ~/.ssh/id_rsa ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            cd /projects/savetherecipe
+            docker compose --project-name savetherecipe --file=docker-compose-savetherecipe-prod.yml pull
+            docker compose --project-name savetherecipe --file=docker-compose-savetherecipe-prod.yml down
+            docker compose --project-name savetherecipe --file=docker-compose-savetherecipe-prod.yml up -d --remove-orphans
+          EOF
