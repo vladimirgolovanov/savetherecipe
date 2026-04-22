@@ -10,7 +10,7 @@ services:
     ports:
       - '44045:8080'
     networks:
-      - shared-net
+      - grpc-net
     restart: unless-stopped
 
 networks:
