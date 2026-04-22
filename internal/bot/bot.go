@@ -55,13 +55,13 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 func (b *Bot) handleURL(msg *tgbotapi.Message) {
 	text := strings.TrimSpace(msg.Text)
 
-	shortcode, ok := instagram.ExtractShortcode(text)
+	canonicalURL, ok := instagram.NormalizeURL(text)
 	if !ok {
 		b.send(tgbotapi.NewMessage(msg.Chat.ID, "Пожалуйста, отправьте корректную ссылку на пост или Reel из Instagram."))
 		return
 	}
 
-	post, err := b.ig.Fetch(shortcode)
+	post, err := b.ig.Fetch(canonicalURL)
 	if err != nil {
 		b.reportError(msg.Chat.ID, "получить данные поста", err)
 		return

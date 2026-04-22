@@ -38,6 +38,6 @@ func main() {
 
 	log.Printf("authorized as @%s", tgBot.Self.UserName)
 
-	b := bot.New(tgBot, os.Getenv("INSTAGRAM_SERVICE_URL"))
+	b := bot.New(tgBot, os.Getenv("INSTAGRAM_GRPC_ADDR"))
 	b.Run()
 }

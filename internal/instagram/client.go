@@ -1,60 +1,79 @@
 package instagram
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
+
+	grab_instagram "github.com/vladimirgolovanov/grab-proto/gen/instagram"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
-var shortcodeRe = regexp.MustCompile(`instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_-]+)`)
+var postRe = regexp.MustCompile(`instagram\.com/(p|reel)/([A-Za-z0-9_-]+)`)
 
-// ExtractShortcode pulls the shortcode from any Instagram post/reel URL.
-func ExtractShortcode(url string) (string, bool) {
-	m := shortcodeRe.FindStringSubmatch(url)
-	if len(m) < 2 {
+// NormalizeURL validates an Instagram URL and returns a canonical form.
+// Returns ("", false) if the URL is not a recognized post or reel link.
+func NormalizeURL(raw string) (string, bool) {
+	m := postRe.FindStringSubmatch(raw)
+	if len(m) < 3 {
 		return "", false
 	}
-	return m[1], true
+	return fmt.Sprintf("https://instagram.com/%s/%s/", m[1], m[2]), true
 }
 
 type PostData struct {
-	Caption  string `json:"caption"`
-	ImageURL string `json:"image_url"`
+	Caption  string
+	ImageURL string
 }
 
 type Client struct {
-	serviceURL string
-	http       *http.Client
+	grpc grab_instagram.InstagramClient
+	http *http.Client
 }
 
-func NewClient(serviceURL string) *Client {
-	return &Client{
-		serviceURL: serviceURL,
-		http:       &http.Client{Timeout: 30 * time.Second},
-	}
-}
-
-func (c *Client) Fetch(shortcode string) (*PostData, error) {
-	url := fmt.Sprintf("%s?shortcode=%s", strings.TrimRight(c.serviceURL, "/"), shortcode)
-	resp, err := c.http.Get(url)
+func NewClient(addr string) *Client {
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		return nil, fmt.Errorf("request: %w", err)
+		panic(fmt.Sprintf("grpc.NewClient: %v", err))
 	}
-	defer resp.Body.Close()
+	return &Client{
+		grpc: grab_instagram.NewInstagramClient(conn),
+		http: &http.Client{Timeout: 30 * time.Second},
+	}
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("service returned %d", resp.StatusCode)
+func (c *Client) Fetch(postURL string) (*PostData, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	stream, err := c.grpc.GetPost(ctx, &grab_instagram.GetPostRequest{
+		PostUrls: []string{postURL},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("grpc GetPost: %w", err)
 	}
 
-	var data PostData
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+	resp, err := stream.Recv()
+	if err != nil {
+		if err == io.EOF {
+			return nil, fmt.Errorf("service returned empty stream")
+		}
+		return nil, fmt.Errorf("stream recv: %w", err)
 	}
-	return &data, nil
+
+	if resp.GetError() != "" {
+		return nil, fmt.Errorf("service error: %s", resp.GetError())
+	}
+
+	return &PostData{
+		Caption:  resp.GetText(),
+		ImageURL: resp.GetImageUrl(),
+	}, nil
 }
 
 func (c *Client) DownloadImage(imageURL string) ([]byte, error) {
