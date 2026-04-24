@@ -6,7 +6,7 @@ require (
 	github.com/getsentry/sentry-go v0.46.0
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/joho/godotenv v1.5.1
-	github.com/vladimirgolovanov/grab-proto v0.1.0
+	github.com/vladimirgolovanov/grab-proto v0.0.0-20260424194832-91b4ef6c55b5
 	google.golang.org/grpc v1.80.0
 )
 

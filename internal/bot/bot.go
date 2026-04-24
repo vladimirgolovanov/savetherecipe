@@ -67,11 +67,7 @@ func (b *Bot) handleURL(msg *tgbotapi.Message) {
 		return
 	}
 
-	imgData, err := b.ig.DownloadImage(post.ImageURL)
-	if err != nil {
-		b.reportError(msg.Chat.ID, "скачать изображение", err)
-		return
-	}
+	imgData := post.ImageData
 
 	caption := instagram.CleanCaption(post.Caption)
 	source := fmt.Sprintf("---\nИсточник: %s", text)

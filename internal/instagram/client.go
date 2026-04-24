@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -27,13 +26,12 @@ func NormalizeURL(raw string) (string, bool) {
 }
 
 type PostData struct {
-	Caption  string
-	ImageURL string
+	Caption   string
+	ImageData []byte
 }
 
 type Client struct {
 	grpc grab_instagram.InstagramClient
-	http *http.Client
 }
 
 func NewClient(addr string) *Client {
@@ -43,7 +41,6 @@ func NewClient(addr string) *Client {
 	}
 	return &Client{
 		grpc: grab_instagram.NewInstagramClient(conn),
-		http: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -71,27 +68,9 @@ func (c *Client) Fetch(postURL string) (*PostData, error) {
 	}
 
 	return &PostData{
-		Caption:  resp.GetText(),
-		ImageURL: resp.GetImageUrl(),
+		Caption:   resp.GetText(),
+		ImageData: resp.GetImageData(),
 	}, nil
-}
-
-func (c *Client) DownloadImage(imageURL string) ([]byte, error) {
-	resp, err := c.http.Get(imageURL)
-	if err != nil {
-		return nil, fmt.Errorf("download: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("image download returned %d", resp.StatusCode)
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read image: %w", err)
-	}
-	return data, nil
 }
 
 var hashtagRe = regexp.MustCompile(`#\S+`)
