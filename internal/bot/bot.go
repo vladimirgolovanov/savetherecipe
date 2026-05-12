@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"savetherecipe/internal/instagram"
+	"savetherecipe/internal/publisher"
 )
 
 const (
@@ -19,13 +21,15 @@ const (
 type Bot struct {
 	api    *tgbotapi.BotAPI
 	ig     *instagram.Client
+	pub    *publisher.Publisher
 	imgDir string
 }
 
-func New(api *tgbotapi.BotAPI, serviceURL string) *Bot {
+func New(api *tgbotapi.BotAPI, serviceURL string, pub *publisher.Publisher) *Bot {
 	return &Bot{
 		api:    api,
 		ig:     instagram.NewClient(serviceURL),
+		pub:    pub,
 		imgDir: "img",
 	}
 }
@@ -84,6 +88,18 @@ func (b *Bot) handleURL(msg *tgbotapi.Message) {
 	}
 
 	b.deleteMessage(msg.Chat.ID, msg.MessageID)
+
+	if b.pub != nil {
+		var userID *int64
+		if msg.From != nil {
+			id := msg.From.ID
+			userID = &id
+		}
+		if err := b.pub.Publish(context.Background(), text, caption, imgData, userID); err != nil {
+			log.Printf("publish: %v", err)
+			sentry.CaptureException(fmt.Errorf("publish: %w", err))
+		}
+	}
 }
 
 func (b *Bot) sendStart(chatID int64) {
