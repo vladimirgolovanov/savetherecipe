@@ -31,10 +31,10 @@ type Publisher struct {
 }
 
 type message struct {
-	Text           string  `json:"text"`
-	URL            string  `json:"url"`
-	ImageURL       string  `json:"image_url"`
-	TelegramUserID *int64  `json:"telegram_user_id"`
+	Text           string `json:"text"`
+	URL            string `json:"url"`
+	ImageURL       string `json:"image_url"`
+	TelegramUserID *int64 `json:"telegram_user_id"`
 }
 
 func New(cfg Config) (*Publisher, error) {
@@ -44,6 +44,17 @@ func New(cfg Config) (*Publisher, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("minio client: %w", err)
+	}
+
+	ctx := context.Background()
+	exists, err := mc.BucketExists(ctx, cfg.MinioBucket)
+	if err != nil {
+		return nil, fmt.Errorf("minio bucket exists: %w", err)
+	}
+	if !exists {
+		if err = mc.MakeBucket(ctx, cfg.MinioBucket, minio.MakeBucketOptions{}); err != nil {
+			return nil, fmt.Errorf("minio make bucket: %w", err)
+		}
 	}
 
 	conn, err := amqp.Dial(cfg.RabbitMQURL)
