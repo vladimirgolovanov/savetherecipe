@@ -48,6 +48,7 @@ jobs:
       - name: Deploy on server
         run: |
           ssh -i ~/.ssh/id_rsa ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
+            export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
             kubectl create secret generic savetherecipe-env \
               --from-env-file=/projects/savetherecipe/.env \
               -n savetherecipe \
