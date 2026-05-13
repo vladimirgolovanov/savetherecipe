@@ -22,13 +22,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create stub .env for build
-        run: touch .env
-
       - name: Build and push
         run: |
-          docker compose --project-name savetherecipe --file=docker-compose-savetherecipe-prod.yml build
-          docker compose --project-name savetherecipe --file=docker-compose-savetherecipe-prod.yml push
+          docker build -f docker/Dockerfile -t ghcr.io/vladimirgolovanov/savetherecipe/savetherecipe:latest .
+          docker push ghcr.io/vladimirgolovanov/savetherecipe/savetherecipe:latest
 
   deploy:
     runs-on: ubuntu-latest
@@ -44,18 +41,17 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
 
-      - name: Copy files to server
+      - name: Copy manifest to server
         run: |
-          scp -i ~/.ssh/id_rsa docker-compose-savetherecipe-prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/projects/savetherecipe/docker-compose-savetherecipe-prod.yml
-          scp -r -i ~/.ssh/id_rsa docker ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/projects/savetherecipe
+          scp -i ~/.ssh/id_rsa k8s/deployment.yaml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/projects/savetherecipe/deployment.yaml
 
       - name: Deploy on server
         run: |
           ssh -i ~/.ssh/id_rsa ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
-            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            docker network create grpc-net || true
-            cd /projects/savetherecipe
-            docker compose --project-name savetherecipe --file=docker-compose-savetherecipe-prod.yml pull
-            docker compose --project-name savetherecipe --file=docker-compose-savetherecipe-prod.yml down
-            docker compose --project-name savetherecipe --file=docker-compose-savetherecipe-prod.yml up -d --remove-orphans
+            kubectl create secret generic savetherecipe-env \
+              --from-env-file=/projects/savetherecipe/.env \
+              -n savetherecipe \
+              --dry-run=client -o yaml | kubectl apply -f -
+            kubectl apply -f /projects/savetherecipe/deployment.yaml
+            kubectl rollout restart deployment/savetherecipe -n savetherecipe
           EOF
