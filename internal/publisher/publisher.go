@@ -25,7 +25,7 @@ type Config struct {
 
 type Publisher struct {
 	minioClient *minio.Client
-	amqpConn    *amqp.Connection
+	cfg         Config
 	bucket      string
 	queue       string
 }
@@ -57,23 +57,24 @@ func New(cfg Config) (*Publisher, error) {
 		}
 	}
 
-	conn, err := amqp.Dial(cfg.RabbitMQURL)
-	if err != nil {
-		return nil, fmt.Errorf("rabbitmq dial: %w", err)
-	}
-
 	return &Publisher{
 		minioClient: mc,
-		amqpConn:    conn,
+		cfg:         cfg,
 		bucket:      cfg.MinioBucket,
 		queue:       cfg.RabbitMQQueue,
 	}, nil
 }
 
 func (p *Publisher) Publish(ctx context.Context, sourceURL, text string, imageData []byte, telegramUserID *int64) error {
+	conn, err := amqp.Dial(p.cfg.RabbitMQURL)
+	if err != nil {
+		return fmt.Errorf("rabbitmq dial: %w", err)
+	}
+	defer conn.Close()
+
 	objectName := fmt.Sprintf("%d.jpg", time.Now().UnixNano())
 
-	_, err := p.minioClient.PutObject(ctx, p.bucket, objectName, bytes.NewReader(imageData), int64(len(imageData)), minio.PutObjectOptions{
+	_, err = p.minioClient.PutObject(ctx, p.bucket, objectName, bytes.NewReader(imageData), int64(len(imageData)), minio.PutObjectOptions{
 		ContentType: "image/jpeg",
 	})
 	if err != nil {
@@ -87,7 +88,7 @@ func (p *Publisher) Publish(ctx context.Context, sourceURL, text string, imageDa
 		return fmt.Errorf("json marshal: %w", err)
 	}
 
-	ch, err := p.amqpConn.Channel()
+	ch, err := conn.Channel()
 	if err != nil {
 		return fmt.Errorf("amqp channel: %w", err)
 	}
@@ -102,8 +103,4 @@ func (p *Publisher) Publish(ctx context.Context, sourceURL, text string, imageDa
 		DeliveryMode: amqp.Persistent,
 		Body:         body,
 	})
-}
-
-func (p *Publisher) Close() {
-	_ = p.amqpConn.Close()
 }

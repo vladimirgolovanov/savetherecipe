@@ -62,7 +62,6 @@ func main() {
 		if err != nil {
 			log.Printf("publisher init: %v", err)
 		} else {
-			defer pub.Close()
 			log.Println("publisher ready (MinIO + RabbitMQ)")
 		}
 	}
