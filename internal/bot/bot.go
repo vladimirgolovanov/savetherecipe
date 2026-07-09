@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"savetherecipe/internal/handler"
 	"savetherecipe/internal/models"
 	"strings"
 
@@ -58,6 +59,9 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 
 func (b *Bot) handleInput(msg *tgbotapi.Message) {
 	ctx := context.Background()
+	if msg.From != nil {
+		ctx = handler.WithTelegramUserID(ctx, msg.From.ID)
+	}
 
 	result, err := b.handler.Handle(ctx, msg.Text)
 	if err != nil {

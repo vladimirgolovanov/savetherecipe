@@ -11,6 +11,19 @@ import (
 	"github.com/getsentry/sentry-go"
 )
 
+type contextKey int
+
+const telegramUserIDKey contextKey = iota
+
+func WithTelegramUserID(ctx context.Context, id int64) context.Context {
+	return context.WithValue(ctx, telegramUserIDKey, &id)
+}
+
+func telegramUserIDFromCtx(ctx context.Context) *int64 {
+	id, _ := ctx.Value(telegramUserIDKey).(*int64)
+	return id
+}
+
 type Handler struct {
 	proc *processor.Processor
 	pub  *publisher.Publisher
@@ -27,8 +40,7 @@ func (h *Handler) Handle(ctx context.Context, text string) (*models.Result, erro
 		return nil, err
 	}
 
-	// todo: telegram user id
-	err = h.pub.Publish(ctx, result.SourceURL, result.Caption, result.ImageData, nil)
+	err = h.pub.Publish(ctx, result.SourceURL, result.Caption, result.ImageData, telegramUserIDFromCtx(ctx))
 	if err != nil {
 		sentry.CaptureException(err)
 	}
