@@ -1,11 +1,11 @@
 package main
 
 import (
+	"context"
 	"log"
-	"net/http"
 	"os"
-	"strconv"
-	"time"
+	"savetherecipe/internal/handler"
+	"savetherecipe/internal/scraper"
 
 	"github.com/getsentry/sentry-go"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -14,73 +14,62 @@ import (
 	"savetherecipe/internal/api"
 	"savetherecipe/internal/bot"
 	"savetherecipe/internal/instagram"
+	"savetherecipe/internal/processor"
 	"savetherecipe/internal/publisher"
 )
 
 func main() {
 	_ = godotenv.Load()
+	log.Printf("Loaded env.\n")
 
-	if dsn := os.Getenv("SENTRY_DSN"); dsn != "" {
-		if err := sentry.Init(sentry.ClientOptions{
-			Dsn:              dsn,
-			TracesSampleRate: 1.0,
-		}); err != nil {
-			log.Printf("sentry init: %v", err)
-		}
-		defer sentry.Flush(2 * time.Second)
-	}
+	defer initSentry()()
+	log.Printf("Loaded sentry.\n")
+
+	ctx := context.Background()
 
 	igClient := instagram.NewClient(os.Getenv("INSTAGRAM_GRPC_ADDR"))
-	mux := http.NewServeMux()
-	api.NewHandler(igClient).Register(mux)
+	log.Printf("Instagram client initialized.\n")
 
-	httpPort := os.Getenv("HTTP_PORT")
-	if httpPort == "" {
-		httpPort = "8080"
+	scraperClient := scraper.New()
+	log.Printf("Scraper initialized.\n")
+
+	proc := processor.New(igClient, scraperClient)
+	log.Printf("Processor initialized.\n")
+
+	minioClient, minioBucket, err := initMinio(ctx)
+	if err != nil {
+		log.Printf("minio: %v", err)
 	}
-	httpAddr := ":" + httpPort
+	log.Printf("Minio client initialized.\n")
 
-	var pub *publisher.Publisher
-	if minioEndpoint := os.Getenv("MINIO_ENDPOINT"); minioEndpoint != "" &&
-		os.Getenv("MINIO_ACCESS_KEY") != "" &&
-		os.Getenv("MINIO_SECRET_KEY") != "" &&
-		os.Getenv("MINIO_BUCKET") != "" &&
-		os.Getenv("RABBITMQ_URL") != "" &&
-		os.Getenv("RABBITMQ_QUEUE") != "" {
-
-		useSSL, _ := strconv.ParseBool(os.Getenv("MINIO_USE_SSL"))
-		var err error
-		pub, err = publisher.New(publisher.Config{
-			MinioEndpoint:  minioEndpoint,
-			MinioAccessKey: os.Getenv("MINIO_ACCESS_KEY"),
-			MinioSecretKey: os.Getenv("MINIO_SECRET_KEY"),
-			MinioBucket:    os.Getenv("MINIO_BUCKET"),
-			MinioUseSSL:    useSSL,
-			RabbitMQURL:    os.Getenv("RABBITMQ_URL"),
-			RabbitMQQueue:  os.Getenv("RABBITMQ_QUEUE"),
-		})
-		if err != nil {
-			log.Printf("publisher init: %v", err)
-		} else {
-			log.Println("publisher ready (MinIO + RabbitMQ)")
-		}
+	rabbit, err := initRabbitMQ()
+	if err != nil {
+		log.Printf("rabbit mq: %v", err)
 	}
+	log.Printf("Publisher initialized.\n")
+
+	var rabbitURL, rabbitQueue string
+	if rabbit != nil {
+		rabbitURL = rabbit.RabbitMQURL
+		rabbitQueue = rabbit.Queue
+	}
+	pub := publisher.New(minioClient, minioBucket, rabbitURL, rabbitQueue)
+
+	h := handler.New(proc, pub)
 
 	if token := os.Getenv("TELEGRAM_TOKEN"); token != "" {
-		tgBot, err := tgbotapi.NewBotAPI(token)
+		telegramBotApi, err := tgbotapi.NewBotAPI(token)
 		if err != nil {
 			sentry.CaptureException(err)
 			log.Fatalf("create bot: %v", err)
 		}
-		log.Printf("authorized as @%s", tgBot.Self.UserName)
-		b := bot.New(tgBot, os.Getenv("INSTAGRAM_GRPC_ADDR"), pub)
-		go b.Run()
+		log.Printf("authorized as @%s", telegramBotApi.Self.UserName)
+
+		go bot.New(telegramBotApi, h).Run()
+
 	} else {
 		log.Println("TELEGRAM_TOKEN not set, running HTTP-only mode")
 	}
 
-	log.Printf("HTTP server listening on %s", httpAddr)
-	if err := http.ListenAndServe(httpAddr, mux); err != nil {
-		log.Fatalf("http server: %v", err)
-	}
+	api.New(h).ListenAndServe()
 }

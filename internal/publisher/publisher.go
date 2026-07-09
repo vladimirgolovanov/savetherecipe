@@ -10,25 +10,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	minio "github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 )
-
-type Config struct {
-	MinioEndpoint  string
-	MinioAccessKey string
-	MinioSecretKey string
-	MinioBucket    string
-	MinioUseSSL    bool
-	RabbitMQURL    string
-	RabbitMQQueue  string
-}
-
-type Publisher struct {
-	minioClient *minio.Client
-	cfg         Config
-	bucket      string
-	queue       string
-}
 
 type message struct {
 	Text           string `json:"text"`
@@ -37,51 +19,44 @@ type message struct {
 	TelegramUserID *int64 `json:"telegram_user_id"`
 }
 
-func New(cfg Config) (*Publisher, error) {
-	mc, err := minio.New(cfg.MinioEndpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.MinioAccessKey, cfg.MinioSecretKey, ""),
-		Secure: cfg.MinioUseSSL,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("minio client: %w", err)
-	}
+type Publisher struct {
+	minioClient *minio.Client
+	minioBucket string
+	rabbitMQURL string
+	rabbitQueue string
+}
 
-	ctx := context.Background()
-	exists, err := mc.BucketExists(ctx, cfg.MinioBucket)
-	if err != nil {
-		return nil, fmt.Errorf("minio bucket exists: %w", err)
-	}
-	if !exists {
-		if err = mc.MakeBucket(ctx, cfg.MinioBucket, minio.MakeBucketOptions{}); err != nil {
-			return nil, fmt.Errorf("minio make bucket: %w", err)
-		}
-	}
-
+func New(minioClient *minio.Client, minioBucket string, rabbitMQURL string, rabbitQueue string) *Publisher {
 	return &Publisher{
-		minioClient: mc,
-		cfg:         cfg,
-		bucket:      cfg.MinioBucket,
-		queue:       cfg.RabbitMQQueue,
-	}, nil
+		minioClient: minioClient,
+		minioBucket: minioBucket,
+		rabbitMQURL: rabbitMQURL,
+		rabbitQueue: rabbitQueue,
+	}
 }
 
 func (p *Publisher) Publish(ctx context.Context, sourceURL, text string, imageData []byte, telegramUserID *int64) error {
-	conn, err := amqp.Dial(p.cfg.RabbitMQURL)
+	if p.rabbitMQURL == "" {
+		return nil
+	}
+
+	conn, err := amqp.Dial(p.rabbitMQURL)
 	if err != nil {
 		return fmt.Errorf("rabbitmq dial: %w", err)
 	}
 	defer conn.Close()
 
-	objectName := fmt.Sprintf("%d.jpg", time.Now().UnixNano())
-
-	_, err = p.minioClient.PutObject(ctx, p.bucket, objectName, bytes.NewReader(imageData), int64(len(imageData)), minio.PutObjectOptions{
-		ContentType: "image/jpeg",
-	})
-	if err != nil {
-		return fmt.Errorf("minio put: %w", err)
+	var imageURL string
+	if len(imageData) > 0 && p.minioClient != nil {
+		objectName := fmt.Sprintf("%d.jpg", time.Now().UnixNano())
+		_, err = p.minioClient.PutObject(ctx, p.minioBucket, objectName, bytes.NewReader(imageData), int64(len(imageData)), minio.PutObjectOptions{
+			ContentType: "image/jpeg",
+		})
+		if err != nil {
+			return fmt.Errorf("minio put: %w", err)
+		}
+		imageURL = fmt.Sprintf("%s/%s/%s", p.minioClient.EndpointURL(), p.minioBucket, objectName)
 	}
-
-	imageURL := fmt.Sprintf("%s/%s/%s", p.minioClient.EndpointURL(), p.bucket, objectName)
 
 	body, err := json.Marshal(message{Text: text, URL: sourceURL, ImageURL: imageURL, TelegramUserID: telegramUserID})
 	if err != nil {
@@ -94,11 +69,11 @@ func (p *Publisher) Publish(ctx context.Context, sourceURL, text string, imageDa
 	}
 	defer ch.Close()
 
-	if _, err = ch.QueueDeclare(p.queue, true, false, false, false, nil); err != nil {
+	if _, err = ch.QueueDeclare(p.rabbitQueue, true, false, false, false, nil); err != nil {
 		return fmt.Errorf("queue declare: %w", err)
 	}
 
-	return ch.PublishWithContext(ctx, "", p.queue, false, false, amqp.Publishing{
+	return ch.PublishWithContext(ctx, "", p.rabbitQueue, false, false, amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
 		Body:         body,

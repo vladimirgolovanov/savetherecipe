@@ -4,13 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"savetherecipe/internal/models"
 	"strings"
 
 	"github.com/getsentry/sentry-go"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-
-	"savetherecipe/internal/instagram"
-	"savetherecipe/internal/publisher"
 )
 
 const (
@@ -19,18 +17,20 @@ const (
 )
 
 type Bot struct {
-	api    *tgbotapi.BotAPI
-	ig     *instagram.Client
-	pub    *publisher.Publisher
-	imgDir string
+	api     *tgbotapi.BotAPI
+	handler InputHandler
+	imgDir  string
 }
 
-func New(api *tgbotapi.BotAPI, serviceURL string, pub *publisher.Publisher) *Bot {
+type InputHandler interface {
+	Handle(ctx context.Context, text string) (*models.Result, error)
+}
+
+func New(api *tgbotapi.BotAPI, handler InputHandler) *Bot {
 	return &Bot{
-		api:    api,
-		ig:     instagram.NewClient(serviceURL),
-		pub:    pub,
-		imgDir: "img",
+		api:     api,
+		imgDir:  "img",
+		handler: handler,
 	}
 }
 
@@ -52,54 +52,42 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	case "start":
 		b.sendStart(msg.Chat.ID)
 	default:
-		b.handleURL(msg)
+		b.handleInput(msg)
 	}
 }
 
-func (b *Bot) handleURL(msg *tgbotapi.Message) {
-	text := strings.TrimSpace(msg.Text)
+func (b *Bot) handleInput(msg *tgbotapi.Message) {
+	ctx := context.Background()
 
-	canonicalURL, ok := instagram.NormalizeURL(text)
-	if !ok {
-		b.send(tgbotapi.NewMessage(msg.Chat.ID, "Пожалуйста, отправьте корректную ссылку на пост или Reel из Instagram."))
-		return
-	}
-
-	post, err := b.ig.Fetch(canonicalURL)
+	result, err := b.handler.Handle(ctx, msg.Text)
 	if err != nil {
-		b.reportError(msg.Chat.ID, "получить данные поста", err)
+		b.reportError(msg.Chat.ID, "handle input", err)
+		return
+	}
+	if result == nil {
 		return
 	}
 
-	imgData := post.ImageData
+	if result.MessageType == models.MessageTypeInstagramURL {
+		b.replacePost(msg, result)
+	}
+}
 
-	caption := instagram.CleanCaption(post.Caption)
-	source := fmt.Sprintf("---\nИсточник: %s", text)
+func (b *Bot) replacePost(msg *tgbotapi.Message, result *models.Result) {
+	source := fmt.Sprintf("---\nИсточник: %s", result.SourceURL)
 
-	if len([]rune(caption)) <= captionLimit {
-		b.sendPhotoWithCaption(msg.Chat.ID, imgData, caption+"\n"+source)
+	if len([]rune(result.Caption)) <= captionLimit {
+		b.sendPhotoWithCaption(msg.Chat.ID, result.ImageData, result.Caption+"\n"+source)
 	} else {
-		runes := []rune(caption)
+		runes := []rune(result.Caption)
 		firstPart := string(runes[:captionLimit])
 		rest := strings.TrimSpace(string(runes[captionLimit:]))
 
-		b.sendPhotoWithCaption(msg.Chat.ID, imgData, firstPart)
+		b.sendPhotoWithCaption(msg.Chat.ID, result.ImageData, firstPart)
 		b.send(tgbotapi.NewMessage(msg.Chat.ID, rest+"\n"+source))
 	}
 
 	b.deleteMessage(msg.Chat.ID, msg.MessageID)
-
-	if b.pub != nil {
-		var userID *int64
-		if msg.From != nil {
-			id := msg.From.ID
-			userID = &id
-		}
-		if err := b.pub.Publish(context.Background(), text, caption, imgData, userID); err != nil {
-			log.Printf("publish: %v", err)
-			sentry.CaptureException(fmt.Errorf("publish: %w", err))
-		}
-	}
 }
 
 func (b *Bot) sendStart(chatID int64) {
@@ -122,7 +110,6 @@ func (b *Bot) sendStart(chatID int64) {
 	group := tgbotapi.NewMediaGroup(chatID, media)
 	if _, err := b.api.SendMediaGroup(group); err != nil {
 		log.Printf("send start media group: %v", err)
-		// fall back to plain text if images are missing
 		b.send(tgbotapi.NewMessage(chatID, startText))
 	}
 }
